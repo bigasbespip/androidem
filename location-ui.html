@@ -1,0 +1,999 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Emulator Location Control</title>
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+    crossorigin=""
+  >
+  <style>
+    :root {
+      --panel: rgba(255, 251, 244, 0.9);
+      --ink: #1d2430;
+      --muted: #5f6b7a;
+      --line: rgba(29, 36, 48, 0.12);
+      --accent: #0e7c66;
+      --accent-strong: #0a5b4b;
+      --accent-soft: #dff4ee;
+      --warn: #bb5a1a;
+      --shadow: 0 18px 40px rgba(66, 45, 18, 0.12);
+      --radius: 24px;
+      --mono: "SF Mono", "Menlo", monospace;
+      --sans: "Avenir Next", "Segoe UI", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: var(--sans);
+      color: var(--ink);
+      background:
+        radial-gradient(circle at top left, rgba(14, 124, 102, 0.16), transparent 30%),
+        radial-gradient(circle at bottom right, rgba(202, 128, 57, 0.18), transparent 26%),
+        linear-gradient(160deg, #f8f3ea 0%, #efe6d8 100%);
+      min-height: 100vh;
+    }
+
+    .shell {
+      width: min(1280px, calc(100% - 32px));
+      margin: 24px auto;
+      display: grid;
+      grid-template-columns: 1.35fr 0.85fr;
+      gap: 20px;
+    }
+
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(12px);
+      padding: 18px;
+    }
+
+    .hero {
+      padding: 26px 26px 18px;
+      position: relative;
+      overflow: hidden;
+      min-height: 152px;
+    }
+
+    .hero::after {
+      content: "";
+      position: absolute;
+      inset: auto -40px -80px auto;
+      width: 220px;
+      height: 220px;
+      border-radius: 999px;
+      background: linear-gradient(180deg, rgba(14, 124, 102, 0.22), rgba(14, 124, 102, 0));
+      transform: rotate(-18deg);
+    }
+
+    h1, h2, h3, p { margin: 0; }
+    h1 {
+      font-size: clamp(2rem, 4.4vw, 3.1rem);
+      line-height: 0.95;
+      letter-spacing: -0.05em;
+      max-width: 8ch;
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      border-radius: 999px;
+      background: var(--accent-soft);
+      color: var(--accent-strong);
+      font-size: 0.88rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin-bottom: 16px;
+    }
+
+    .subtle {
+      color: var(--muted);
+      line-height: 1.5;
+      margin-top: 14px;
+      max-width: 60ch;
+    }
+
+    .status-row, .pill-row, .toolbar-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    .status-pill, .mini-pill, .mode-pill {
+      border-radius: 999px;
+      padding: 10px 14px;
+      border: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.66);
+      font-size: 0.93rem;
+    }
+
+    .status-pill strong, .mini-pill strong, .mode-pill strong {
+      font-weight: 800;
+    }
+
+    .ok { color: var(--accent-strong); }
+    .warn { color: var(--warn); }
+
+    .section-title {
+      font-size: 1rem;
+      font-weight: 800;
+      letter-spacing: 0.02em;
+      margin-bottom: 12px;
+    }
+
+    .map-card {
+      padding: 16px;
+    }
+
+    .map-toolbar {
+      display: grid;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+
+    .toolbar-row button {
+      border-radius: 16px;
+      padding: 12px 16px;
+      border: 1px solid rgba(29, 36, 48, 0.1);
+      background: rgba(255, 255, 255, 0.78);
+      font: inherit;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    .toolbar-row button.is-active {
+      background: linear-gradient(180deg, #0f8d73, #0b6d59);
+      color: white;
+      border-color: transparent;
+    }
+
+    .toolbar-copy {
+      color: var(--muted);
+      font-size: 0.94rem;
+    }
+
+    #map {
+      width: 100%;
+      height: 600px;
+      border-radius: 22px;
+      overflow: hidden;
+      border: 1px solid rgba(29, 36, 48, 0.08);
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.25);
+    }
+
+    .leaflet-container {
+      font-family: var(--sans);
+      background: #dfe9e7;
+    }
+
+    .leaflet-control-attribution {
+      font-size: 10px;
+    }
+
+    .grid-2 {
+      display: grid;
+      gap: 10px;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .pin-cell {
+      border-radius: 18px;
+      padding: 12px 14px;
+      background: rgba(255, 255, 255, 0.72);
+      border: 1px solid rgba(29, 36, 48, 0.08);
+    }
+
+    .pin-label {
+      color: var(--muted);
+      font-size: 0.8rem;
+      margin-bottom: 4px;
+    }
+
+    .pin-value {
+      font-family: var(--mono);
+      font-size: 0.92rem;
+      font-weight: 700;
+    }
+
+    .stack {
+      display: grid;
+      gap: 18px;
+      align-self: start;
+    }
+
+    .preset-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .preset {
+      text-align: left;
+      padding: 14px;
+      background: #fff8ee;
+      border: 1px solid rgba(29, 36, 48, 0.08);
+      border-radius: 16px;
+      cursor: pointer;
+    }
+
+    .preset-name {
+      font-size: 1rem;
+      font-weight: 800;
+      margin-bottom: 4px;
+    }
+
+    .preset-meta, .mono-copy, .output, .recent-meta {
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 0.82rem;
+      white-space: pre-wrap;
+      line-height: 1.45;
+    }
+
+    label {
+      display: grid;
+      gap: 8px;
+      font-weight: 700;
+      color: var(--muted);
+    }
+
+    input {
+      width: 100%;
+      border-radius: 14px;
+      border: 1px solid rgba(29, 36, 48, 0.12);
+      padding: 12px 14px;
+      font: inherit;
+      background: rgba(255, 255, 255, 0.86);
+      color: var(--ink);
+    }
+
+    .controls-grid {
+      display: grid;
+      gap: 12px;
+    }
+
+    .actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-top: 4px;
+    }
+
+    .primary, .secondary, .danger {
+      border-radius: 16px;
+      padding: 12px 18px;
+      font: inherit;
+      font-weight: 800;
+      cursor: pointer;
+      border: 1px solid transparent;
+    }
+
+    .primary {
+      background: linear-gradient(180deg, #0f8d73, #0b6d59);
+      color: white;
+    }
+
+    .secondary {
+      background: rgba(255, 255, 255, 0.7);
+      color: var(--ink);
+      border-color: var(--line);
+    }
+
+    .danger {
+      background: rgba(187, 90, 26, 0.1);
+      color: var(--warn);
+      border-color: rgba(187, 90, 26, 0.18);
+    }
+
+    .output {
+      min-height: 120px;
+      padding: 14px;
+      border-radius: 16px;
+      background: #1d2430;
+      color: #e6f2ef;
+    }
+
+    .recent-list {
+      display: grid;
+      gap: 10px;
+    }
+
+    .recent-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      padding: 12px 14px;
+      border-radius: 16px;
+      background: rgba(255, 255, 255, 0.7);
+      border: 1px solid rgba(29, 36, 48, 0.08);
+    }
+
+    .recent-title {
+      font-weight: 800;
+    }
+
+    @media (max-width: 980px) {
+      .shell {
+        grid-template-columns: 1fr;
+      }
+
+      #map {
+        height: 460px;
+      }
+    }
+
+    @media (max-width: 640px) {
+      .grid-2, .preset-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <section class="card map-card">
+      <div class="hero">
+        <div class="eyebrow">Live Movement Studio</div>
+        <h1>Simulate drift and walking.</h1>
+        <p class="subtle">Use the map for one-off jumps, realistic GPS wobble, or route-based walking. The simulator keeps running outside the emulator so your app can stay open while the location changes in the background.</p>
+        <div class="status-row" style="margin-top: 18px;">
+          <div class="status-pill" id="deviceState"><strong>Checking emulator…</strong></div>
+          <div class="status-pill" id="locationState">Location status pending</div>
+          <div class="status-pill" id="simState">Simulator idle</div>
+        </div>
+      </div>
+
+      <div class="map-toolbar">
+        <div class="toolbar-row">
+          <button id="modePin" class="is-active">Pin Mode</button>
+          <button id="modeRoute">Route Draw Mode</button>
+          <button id="clearRoute">Clear Route</button>
+          <button id="fitRoute">Fit Route</button>
+        </div>
+        <div class="toolbar-copy" id="mapHelp">Click the map to move the target pin. Drag the pin for fine adjustments. Switch to route mode to add walking waypoints.</div>
+      </div>
+
+      <div id="map"></div>
+      <div class="grid-2" style="margin-top: 12px;">
+        <div class="pin-cell">
+          <div class="pin-label">Selected target</div>
+          <div class="pin-value" id="targetValue">51.50740, -0.12780</div>
+        </div>
+        <div class="pin-cell">
+          <div class="pin-label">Route length</div>
+          <div class="pin-value" id="routeDistance">0.00 km</div>
+        </div>
+        <div class="pin-cell">
+          <div class="pin-label">Emulator GPS</div>
+          <div class="pin-value" id="gpsValue">waiting</div>
+        </div>
+        <div class="pin-cell">
+          <div class="pin-label">Delta to target</div>
+          <div class="pin-value" id="targetDelta">waiting</div>
+        </div>
+      </div>
+    </section>
+
+    <div class="stack">
+      <section class="card">
+        <div class="section-title">Manual Jump</div>
+        <div class="controls-grid">
+          <label>
+            Label
+            <input id="labelInput" placeholder="Custom test spot">
+          </label>
+          <div class="grid-2">
+            <label>
+              Latitude
+              <input id="latInput" inputmode="decimal" placeholder="51.5074">
+            </label>
+            <label>
+              Longitude
+              <input id="lonInput" inputmode="decimal" placeholder="-0.1278">
+            </label>
+          </div>
+        </div>
+        <div class="actions">
+          <button class="primary" id="applyButton">Apply To Emulator</button>
+          <button class="secondary" id="refreshButton">Refresh Status</button>
+          <button class="danger" id="stopSimButton">Stop Simulation</button>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="section-title">GPS Wobble</div>
+        <div class="controls-grid">
+          <div class="grid-2">
+            <label>
+              Radius (m)
+              <input id="wobbleRadius" type="number" min="1" step="1" value="8">
+            </label>
+            <label>
+              Interval (s)
+              <input id="wobbleInterval" type="number" min="0.5" step="0.1" value="1.5">
+            </label>
+          </div>
+          <div class="mono-copy">Uses the current target pin as the wobble center.</div>
+        </div>
+        <div class="actions">
+          <button class="primary" id="startWobbleButton">Start Wobble</button>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="section-title">Route Walking</div>
+        <div class="controls-grid">
+          <div class="grid-2">
+            <label>
+              Speed (m/s)
+              <input id="routeSpeed" type="number" min="0.2" step="0.1" value="2.2">
+            </label>
+            <label>
+              Update interval (s)
+              <input id="routeInterval" type="number" min="0.5" step="0.1" value="4.0">
+            </label>
+          </div>
+          <div class="grid-2">
+            <label>
+              Wobble while walking (m)
+              <input id="routeWobble" type="number" min="0" step="0.5" value="2">
+            </label>
+            <label>
+              Loop route
+              <input id="routeLoop" type="checkbox" checked style="width:auto; justify-self:start;">
+            </label>
+          </div>
+          <div class="mono-copy">Switch to route draw mode, click the map to add waypoints, then start walking. Larger steps every few seconds work better than tiny 1-second hops for this emulator/game combo.</div>
+        </div>
+        <div class="actions">
+          <button class="primary" id="startRouteButton">Start Walking Route</button>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="section-title">Preset Jumps</div>
+        <div class="preset-grid" id="presetGrid"></div>
+      </section>
+
+      <section class="card">
+        <div class="section-title">Live Status</div>
+        <div class="pill-row">
+          <div class="mini-pill" id="fusedValue"><strong>Fused:</strong> waiting</div>
+          <div class="mini-pill" id="simDetail"><strong>Mode:</strong> idle</div>
+        </div>
+        <div class="section-title" style="margin-top: 18px;">Latest Output</div>
+        <div class="output" id="commandOutput">No location request yet.</div>
+      </section>
+
+      <section class="card">
+        <div class="section-title">Recent Targets</div>
+        <div class="recent-list" id="recentList"></div>
+      </section>
+    </div>
+  </div>
+
+  <script
+    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+    crossorigin=""
+  ></script>
+  <script>
+    const recentKey = "emulator-location-recents";
+    const state = {
+      presets: [],
+      recents: loadRecents(),
+      status: null,
+      simulation: null,
+      persisted: null,
+      target: { name: "London", lat: 51.5074, lon: -0.1278 },
+      mapMode: "pin",
+      routePoints: [],
+      map: null,
+      marker: null,
+      routeLine: null,
+      routeMarkers: [],
+      emulatorMarker: null
+    };
+
+    window.locationStudio = { state };
+
+    function loadRecents() {
+      try {
+        return JSON.parse(localStorage.getItem(recentKey) || "[]");
+      } catch {
+        return [];
+      }
+    }
+
+    function saveRecents() {
+      localStorage.setItem(recentKey, JSON.stringify(state.recents.slice(0, 8)));
+    }
+
+    async function savePersisted(payload) {
+      try {
+        const data = await fetchJson("/api/persist", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        state.persisted = data.persisted;
+      } catch (error) {
+        console.warn("Failed to persist state", error);
+      }
+    }
+
+    function fmtCoord(v) {
+      return typeof v === "number" ? v.toFixed(5) : "waiting";
+    }
+
+    function haversineKm(aLat, aLon, bLat, bLon) {
+      const toRad = (deg) => deg * Math.PI / 180;
+      const earthKm = 6371;
+      const dLat = toRad(bLat - aLat);
+      const dLon = toRad(bLon - aLon);
+      const x = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(aLat)) * Math.cos(toRad(bLat)) * Math.sin(dLon / 2) ** 2;
+      return 2 * earthKm * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
+    }
+
+    function routeDistanceKm(points) {
+      let total = 0;
+      for (let i = 0; i < points.length - 1; i += 1) {
+        total += haversineKm(points[i].lat, points[i].lon, points[i + 1].lat, points[i + 1].lon);
+      }
+      return total;
+    }
+
+    function updateTargetDisplay() {
+      document.getElementById("targetValue").textContent = `${fmtCoord(state.target.lat)}, ${fmtCoord(state.target.lon)}`;
+      document.getElementById("latInput").value = state.target.lat.toFixed(6);
+      document.getElementById("lonInput").value = state.target.lon.toFixed(6);
+      document.getElementById("routeDistance").textContent = `${routeDistanceKm(state.routePoints).toFixed(2)} km`;
+    }
+
+    function updateDelta() {
+      const gps = state.status?.providers?.gps;
+      const targetDelta = document.getElementById("targetDelta");
+      if (!gps) {
+        targetDelta.textContent = "waiting";
+        return;
+      }
+      targetDelta.textContent = `${haversineKm(state.target.lat, state.target.lon, gps.lat, gps.lon).toFixed(2)} km`;
+    }
+
+    function setMapMode(mode) {
+      state.mapMode = mode;
+      document.getElementById("modePin").classList.toggle("is-active", mode === "pin");
+      document.getElementById("modeRoute").classList.toggle("is-active", mode === "route");
+      document.getElementById("mapHelp").textContent = mode === "pin"
+        ? "Click the map to move the target pin. Drag the pin for fine adjustments."
+        : "Click the map to add route waypoints. Clear route to start over.";
+    }
+
+    function renderRoute() {
+      const latlngs = state.routePoints.map((point) => [point.lat, point.lon]);
+      state.routeLine.setLatLngs(latlngs);
+      state.routeMarkers.forEach((marker) => marker.remove());
+      state.routeMarkers = state.routePoints.map((point, index) =>
+        L.circleMarker([point.lat, point.lon], {
+          radius: index === 0 ? 6 : 5,
+          weight: 2,
+          color: "#0a5b4b",
+          fillColor: "#0f8d73",
+          fillOpacity: 0.92
+        }).addTo(state.map)
+      );
+      updateTargetDisplay();
+    }
+
+    function clearRoute() {
+      state.routePoints = [];
+      renderRoute();
+      savePersisted({ route_points: [] });
+    }
+
+    function fitRoute() {
+      if (!state.routePoints.length) return;
+      state.map.fitBounds(state.routePoints.map((point) => [point.lat, point.lon]), { padding: [30, 30] });
+    }
+
+    function setTarget(location, options = {}) {
+      state.target = {
+        name: location.name || state.target.name || "Custom location",
+        lat: Number(location.lat),
+        lon: Number(location.lon)
+      };
+      if (state.marker) {
+        state.marker.setLatLng([state.target.lat, state.target.lon]);
+        if (options.pan !== false) {
+          state.map.panTo([state.target.lat, state.target.lon], { animate: true, duration: 0.35 });
+        }
+      }
+      if (options.replaceLabel !== false) {
+        document.getElementById("labelInput").value = state.target.name || "";
+      }
+      updateTargetDisplay();
+      updateDelta();
+      if (options.persist !== false) {
+        savePersisted({ target: state.target });
+      }
+    }
+
+    function renderSimulation(simulation) {
+      state.simulation = simulation;
+      const mode = simulation?.mode || "idle";
+      const running = simulation?.running;
+      const simState = document.getElementById("simState");
+      const simDetail = document.getElementById("simDetail");
+      simState.innerHTML = running
+        ? `<strong class="ok">${mode} running</strong>`
+        : `<strong>${mode}</strong>`;
+
+      let detail = "idle";
+      if (mode === "wobble") {
+        detail = `wobble ${simulation.config.radius_m}m every ${simulation.config.interval_s}s`;
+      } else if (mode === "route") {
+        detail = `route ${simulation.config.speed_mps}m/s, ${simulation.config.points.length} pts`;
+      }
+      simDetail.innerHTML = `<strong>Mode:</strong> ${detail}`;
+      if (simulation?.last_output) {
+        document.getElementById("commandOutput").textContent = simulation.last_output;
+      }
+    }
+
+    function renderStatus(status) {
+      state.status = status;
+      const connected = status?.connected;
+      const gps = status?.providers?.gps;
+      const fused = status?.providers?.fused;
+      const enabled = status?.location_enabled;
+
+      document.getElementById("deviceState").innerHTML = connected
+        ? '<strong class="ok">Emulator connected</strong>'
+        : '<strong class="warn">Emulator not connected</strong>';
+      document.getElementById("locationState").innerHTML = enabled === true
+        ? '<strong class="ok">Android location is on</strong>'
+        : '<strong class="warn">Android location is off</strong>';
+      document.getElementById("gpsValue").textContent = gps ? `${fmtCoord(gps.lat)}, ${fmtCoord(gps.lon)}` : "waiting";
+      document.getElementById("fusedValue").innerHTML = `<strong>Fused:</strong> ${fused ? `${fmtCoord(fused.lat)}, ${fmtCoord(fused.lon)}` : "waiting"}`;
+
+      if (gps) {
+        if (!state.emulatorMarker) {
+          state.emulatorMarker = L.circleMarker([gps.lat, gps.lon], {
+            radius: 7,
+            weight: 2,
+            color: "#bb5a1a",
+            fillColor: "#f7a25d",
+            fillOpacity: 0.85
+          }).addTo(state.map);
+        } else {
+          state.emulatorMarker.setLatLng([gps.lat, gps.lon]);
+        }
+      }
+
+      updateDelta();
+    }
+
+    function applyPersisted(persisted) {
+      state.persisted = persisted;
+      if (!persisted) return;
+
+      if (persisted.last_target) {
+        state.target = {
+          name: persisted.last_target.name || state.target.name,
+          lat: Number(persisted.last_target.lat),
+          lon: Number(persisted.last_target.lon)
+        };
+        document.getElementById("labelInput").value = state.target.name || "";
+        document.getElementById("latInput").value = state.target.lat.toFixed(6);
+        document.getElementById("lonInput").value = state.target.lon.toFixed(6);
+        document.getElementById("targetValue").textContent = `${fmtCoord(state.target.lat)}, ${fmtCoord(state.target.lon)}`;
+        if (state.marker) {
+          state.marker.setLatLng([state.target.lat, state.target.lon]);
+        }
+      }
+
+      if (Array.isArray(persisted.route_points)) {
+        state.routePoints = persisted.route_points.map((point) => ({
+          lat: Number(point.lat),
+          lon: Number(point.lon)
+        }));
+      }
+
+      const wobble = persisted.settings?.wobble;
+      if (wobble) {
+        document.getElementById("wobbleRadius").value = wobble.radius_m;
+        document.getElementById("wobbleInterval").value = wobble.interval_s;
+      }
+
+      const route = persisted.settings?.route;
+      if (route) {
+        document.getElementById("routeSpeed").value = route.speed_mps;
+        document.getElementById("routeInterval").value = route.interval_s;
+        document.getElementById("routeWobble").value = route.wobble_m;
+        document.getElementById("routeLoop").checked = !!route.loop;
+      }
+
+      renderRoute();
+      setTarget(state.target, { replaceLabel: true, pan: false, persist: false });
+    }
+
+    function renderPresets() {
+      const grid = document.getElementById("presetGrid");
+      grid.innerHTML = "";
+      state.presets.forEach((preset) => {
+        const button = document.createElement("button");
+        button.className = "preset";
+        button.innerHTML = `
+          <div class="preset-name">${preset.name}</div>
+          <div class="preset-meta">${preset.lat}, ${preset.lon}</div>
+        `;
+        button.addEventListener("click", () => {
+          setTarget(preset);
+          applyLocation(preset);
+        });
+        grid.appendChild(button);
+      });
+    }
+
+    function renderRecents() {
+      const list = document.getElementById("recentList");
+      list.innerHTML = "";
+      if (!state.recents.length) {
+        list.innerHTML = '<div class="recent-item"><div><div class="recent-title">No recent targets yet</div><div class="recent-meta">Applied locations will show up here for quick reuse.</div></div></div>';
+        return;
+      }
+      state.recents.forEach((item) => {
+        const row = document.createElement("div");
+        row.className = "recent-item";
+        row.innerHTML = `
+          <div>
+            <div class="recent-title">${item.name}</div>
+            <div class="recent-meta">${item.lat}, ${item.lon}</div>
+          </div>
+          <button class="secondary">Reuse</button>
+        `;
+        row.querySelector("button").addEventListener("click", () => {
+          setTarget(item);
+          applyLocation(item);
+        });
+        list.appendChild(row);
+      });
+    }
+
+    async function fetchJson(url, options) {
+      const res = await fetch(url, options);
+      const data = await res.json();
+      if (!res.ok || data.ok === false) throw new Error(data.error || "Request failed");
+      return data;
+    }
+
+    async function refreshStatus() {
+      const data = await fetchJson("/api/status");
+      renderStatus(data.status);
+      renderSimulation(data.simulation);
+      if (!state.persisted && data.persisted) {
+        applyPersisted(data.persisted);
+      } else {
+        state.persisted = data.persisted || state.persisted;
+      }
+    }
+
+    async function loadPresets() {
+      const data = await fetchJson("/api/presets");
+      state.presets = data.presets;
+      renderPresets();
+    }
+
+    function currentFormLocation() {
+      return {
+        name: document.getElementById("labelInput").value.trim() || "Custom location",
+        lat: Number(document.getElementById("latInput").value.trim()),
+        lon: Number(document.getElementById("lonInput").value.trim())
+      };
+    }
+
+    async function applyLocation(location) {
+      const output = document.getElementById("commandOutput");
+      const normalized = {
+        name: location.name || "Custom location",
+        lat: Number(location.lat),
+        lon: Number(location.lon)
+      };
+      setTarget(normalized, { replaceLabel: true, pan: false });
+      output.textContent = `Applying ${normalized.name}...`;
+      try {
+        const data = await fetchJson("/api/set-location", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(normalized)
+        });
+        output.textContent = data.output || "Location applied.";
+        renderStatus(data.status);
+        renderSimulation(data.simulation);
+        state.persisted = data.persisted || state.persisted;
+        state.recents = [normalized, ...state.recents.filter((r) => r.lat !== normalized.lat || r.lon !== normalized.lon)];
+        saveRecents();
+        renderRecents();
+      } catch (error) {
+        output.textContent = String(error.message || error);
+      }
+    }
+
+    async function startWobble() {
+      const radius_m = Number(document.getElementById("wobbleRadius").value);
+      const interval_s = Number(document.getElementById("wobbleInterval").value);
+      const data = await fetchJson("/api/sim/wobble/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ center: state.target, radius_m, interval_s })
+      });
+      renderStatus(data.status);
+      renderSimulation(data.simulation);
+      state.persisted = data.persisted || state.persisted;
+      document.getElementById("commandOutput").textContent = `Started GPS wobble around ${state.target.name || "target"} (${radius_m}m radius).`;
+    }
+
+    async function startRoute() {
+      if (state.routePoints.length < 2) {
+        document.getElementById("commandOutput").textContent = "Add at least two route waypoints first.";
+        return;
+      }
+      const speed_mps = Number(document.getElementById("routeSpeed").value);
+      const interval_s = Number(document.getElementById("routeInterval").value);
+      const wobble_m = Number(document.getElementById("routeWobble").value);
+      const loop = document.getElementById("routeLoop").checked;
+      const data = await fetchJson("/api/sim/route/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ points: state.routePoints, speed_mps, interval_s, wobble_m, loop })
+      });
+      renderStatus(data.status);
+      renderSimulation(data.simulation);
+      state.persisted = data.persisted || state.persisted;
+      document.getElementById("commandOutput").textContent = `Started walking route at ${speed_mps} m/s over ${state.routePoints.length} points.`;
+    }
+
+    async function stopSimulation() {
+      const data = await fetchJson("/api/sim/stop", { method: "POST" });
+      renderStatus(data.status);
+      renderSimulation(data.simulation);
+      state.persisted = data.persisted || state.persisted;
+      document.getElementById("commandOutput").textContent = "Stopped active simulation.";
+    }
+
+    function buildMap() {
+      state.map = L.map("map", { zoomControl: true, worldCopyJump: true }).setView([state.target.lat, state.target.lon], 4);
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        maxZoom: 19,
+        attribution: "&copy; OpenStreetMap contributors"
+      }).addTo(state.map);
+
+      state.marker = L.marker([state.target.lat, state.target.lon], { draggable: true }).addTo(state.map);
+      state.marker.bindTooltip("Target pin", { direction: "top", offset: [0, -12] });
+      state.marker.on("dragend", () => {
+        const position = state.marker.getLatLng();
+        setTarget({
+          name: document.getElementById("labelInput").value.trim() || "Dragged pin",
+          lat: position.lat,
+          lon: position.lng
+        }, { replaceLabel: false, pan: false });
+      });
+
+      state.routeLine = L.polyline([], {
+        color: "#0f8d73",
+        weight: 4,
+        opacity: 0.85,
+        dashArray: "10 8"
+      }).addTo(state.map);
+
+      state.map.on("click", (event) => {
+        if (state.mapMode === "route") {
+          state.routePoints.push({ lat: event.latlng.lat, lon: event.latlng.lng });
+          renderRoute();
+          savePersisted({ route_points: state.routePoints });
+          return;
+        }
+        setTarget({
+          name: document.getElementById("labelInput").value.trim() || "Map selection",
+          lat: event.latlng.lat,
+          lon: event.latlng.lng
+        }, { replaceLabel: false, pan: false });
+      });
+    }
+
+    document.getElementById("modePin").addEventListener("click", () => setMapMode("pin"));
+    document.getElementById("modeRoute").addEventListener("click", () => setMapMode("route"));
+    document.getElementById("clearRoute").addEventListener("click", clearRoute);
+    document.getElementById("fitRoute").addEventListener("click", fitRoute);
+    document.getElementById("applyButton").addEventListener("click", () => {
+      const location = currentFormLocation();
+      if (!Number.isFinite(location.lat) || !Number.isFinite(location.lon)) {
+        document.getElementById("commandOutput").textContent = "Enter valid numeric latitude and longitude.";
+        return;
+      }
+      applyLocation(location);
+    });
+    document.getElementById("refreshButton").addEventListener("click", refreshStatus);
+    document.getElementById("startWobbleButton").addEventListener("click", startWobble);
+    document.getElementById("startRouteButton").addEventListener("click", startRoute);
+    document.getElementById("stopSimButton").addEventListener("click", stopSimulation);
+
+    document.getElementById("latInput").addEventListener("change", () => {
+      const location = currentFormLocation();
+      if (Number.isFinite(location.lat) && Number.isFinite(location.lon)) {
+        setTarget(location, { replaceLabel: false });
+      }
+    });
+    document.getElementById("lonInput").addEventListener("change", () => {
+      const location = currentFormLocation();
+      if (Number.isFinite(location.lat) && Number.isFinite(location.lon)) {
+        setTarget(location, { replaceLabel: false });
+      }
+    });
+    document.getElementById("labelInput").addEventListener("change", () => {
+      state.target.name = document.getElementById("labelInput").value.trim() || state.target.name;
+      savePersisted({ target: state.target });
+    });
+
+    document.getElementById("wobbleRadius").addEventListener("change", () => {
+      savePersisted({
+        settings: {
+          wobble: {
+            radius_m: Number(document.getElementById("wobbleRadius").value),
+            interval_s: Number(document.getElementById("wobbleInterval").value)
+          }
+        }
+      });
+    });
+
+    document.getElementById("wobbleInterval").addEventListener("change", () => {
+      savePersisted({
+        settings: {
+          wobble: {
+            radius_m: Number(document.getElementById("wobbleRadius").value),
+            interval_s: Number(document.getElementById("wobbleInterval").value)
+          }
+        }
+      });
+    });
+
+    const persistRouteSettings = () => savePersisted({
+      settings: {
+        route: {
+          speed_mps: Number(document.getElementById("routeSpeed").value),
+          interval_s: Number(document.getElementById("routeInterval").value),
+          wobble_m: Number(document.getElementById("routeWobble").value),
+          loop: document.getElementById("routeLoop").checked
+        }
+      }
+    });
+
+    document.getElementById("routeSpeed").addEventListener("change", persistRouteSettings);
+    document.getElementById("routeInterval").addEventListener("change", persistRouteSettings);
+    document.getElementById("routeWobble").addEventListener("change", persistRouteSettings);
+    document.getElementById("routeLoop").addEventListener("change", persistRouteSettings);
+
+    buildMap();
+    setMapMode("pin");
+    renderRecents();
+    loadPresets();
+    refreshStatus().then(() => {
+      if (!state.persisted) {
+        setTarget(state.target, { replaceLabel: true, pan: false, persist: false });
+      }
+    });
+    setInterval(refreshStatus, 3000);
+  </script>
+</body>
+</html>
